@@ -22,3 +22,7 @@ New builds install over the old one and keep your saved decks and progress.
 ## Adding voice lines
 
 Record the lines in `VOICE_SCRIPT.md`, name each file exactly as listed (for example `voltnutt_win.m4a`), upload them into `app/src/main/assets/www/voice/`, and commit. A new APK builds automatically.
+
+## Battle music
+
+Battles have built-in music that changes with each factory. To use your own track, add `battle.mp3` (or a factory name like `fire.mp3`) to `app/src/main/assets/www/music/`. See the README in that folder.

@@ -740,6 +740,7 @@ let screen='title', draft=null, G=null, deckFilter='all';
 let setup={mode:'campaign', l0:save.leader||'voltnutt', l1:'halt'};
 
 function render(){
+  if(screen!=='battle'&&M) stopMusic();
   const hand=app.querySelector('.hand'), sl=hand?hand.scrollLeft:0;
   let h='';
   if(screen==='title') h=titleHTML();
@@ -888,6 +889,7 @@ function startBattle(o){
   startTurn(0);
   G.fx.push({kind:'turn',text:'Battle start!',sub:o.mode==='campaign'?STOPS[stop].name:'Your turn first',c:'#e39a2d'});
   say('vo_battle_start',{urgent:true}); say(p0.leader+'_start'); say(p1.leader+'_start');
+  G.musicKey=musicKeyFor(p1.leader); startMusic(G.musicKey);
   render();
 }
 
@@ -1051,6 +1053,7 @@ function checkWin(){
   if(G.over){ G.busy=false; clearSel(); onGameOver(); }
 }
 function onGameOver(){
+  stopMusic();
   G.fx.push({kind:(G.mode==='pvp'||G.over.winner===0)?'win':'lose'});
   { const w=G.over.winner, P=G.players;
     if(w===0||(G.mode==='pvp'&&w===1)){ say('vo_victory',{urgent:true}); say(P[1-w].leader+'_lose'); say(P[w].leader+'_win');
@@ -1358,7 +1361,8 @@ function say(id,opt){
 function pumpVoice(){
   if(vPlaying||!vq.length) return;
   const id=vq.shift(), tok=++vToken; vPlaying=true;
-  const done=()=>{ if(tok!==vToken) return; vPlaying=false; pumpVoice(); };
+  duckMusic(true);
+  const done=()=>{ if(tok!==vToken) return; vPlaying=false; duckMusic(false); pumpVoice(); };
   playVoice(id,0,tok,done);
 }
 function playVoice(id,i,tok,done){
@@ -1375,7 +1379,108 @@ function playVoice(id,i,tok,done){
   setTimeout(()=>{ if(!fin&&tok===vToken&&a.paused&&!voiceExt[id]){ fin=true; playVoice(id,i+1,tok,done); } },1500);
   setTimeout(()=>{ if(!fin){ try{ a.pause(); }catch(e){} end(); } },9000);
 }
-function audioLabel(){ return !soundOn?'Audio: off':voiceOn?'Audio: all':'Audio: sfx'; }
+function audioLabel(){ return !soundOn?'Audio: off':!voiceOn?'SFX only':!musicOn?'No music':'Audio: all'; }
+/* ===================== BATTLE MUSIC =====================
+   Plays music/<theme>.mp3 or music/battle.mp3 if you add one (APK),
+   otherwise a built-in chiptune that changes with each factory. */
+let musicOn=true; try{ musicOn=localStorage.getItem('voltnutt-music')!=='off'; }catch(e){}
+const THEMES={
+  neutral:{root:57,minor:true,bpm:126,lead:'square'},
+  directorate:{root:52,minor:true,bpm:118,lead:'sawtooth'},
+  fire:{root:52,minor:true,bpm:140,lead:'sawtooth'},
+  water:{root:60,minor:false,bpm:118,lead:'triangle'},
+  nature:{root:55,minor:false,bpm:112,lead:'triangle'},
+  storm:{root:59,minor:true,bpm:150,lead:'square'},
+  frost:{root:62,minor:true,bpm:104,lead:'triangle'},
+  metal:{root:50,minor:true,bpm:128,lead:'sawtooth'},
+  psychic:{root:61,minor:true,bpm:116,lead:'sine'},
+  shadow:{root:56,minor:true,bpm:110,lead:'square'}
+};
+const MINOR=[0,2,3,5,7,8,10], MAJOR=[0,2,4,5,7,9,11], PROG_MIN=[0,5,2,6], PROG_MAJ=[0,4,5,3];
+const MUSIC_VOL=.16, MUSIC_DUCK=.06;
+let M=null, NOISE=null;
+const mtof=m=>440*Math.pow(2,(m-69)/12);
+function ensureAC(){ AC=AC||new (window.AudioContext||window.webkitAudioContext)(); if(AC.state==='suspended') AC.resume(); return AC; }
+function musicKeyFor(leaderId){ const L=LEADERS[leaderId]; return L.el||(L.f==='D'?'directorate':'neutral'); }
+function startMusic(key){
+  stopMusic();
+  if(!musicOn||!soundOn) return;
+  const m={key,theme:THEMES[key]||THEMES.neutral,step:0,file:null,timer:null,gain:null};
+  M=m;
+  const tryFile=names=>{
+    if(M!==m) return;
+    if(!names.length){ startSynth(m); return; }
+    let a, settled=false;
+    try{ a=new Audio(`music/${names[0]}.mp3`); }catch(e){ return tryFile(names.slice(1)); }
+    a.loop=true; a.volume=.35;
+    a.oncanplaythrough=()=>{ if(settled) return; settled=true; if(M!==m){ a.src=''; return; } m.file=a; const pr=a.play(); if(pr&&pr.catch) pr.catch(()=>{}); };
+    a.onerror=()=>{ if(settled) return; settled=true; tryFile(names.slice(1)); };
+    setTimeout(()=>{ if(!settled){ settled=true; a.src=''; tryFile(names.slice(1)); } },1200);
+    a.load();
+  };
+  tryFile([key,'battle']);
+}
+function startSynth(m){
+  try{ ensureAC(); }catch(e){ return; }
+  if(!NOISE){ NOISE=AC.createBuffer(1,AC.sampleRate,AC.sampleRate); const d=NOISE.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1; }
+  m.gain=AC.createGain(); m.gain.gain.setValueAtTime(0,AC.currentTime);
+  m.gain.gain.linearRampToValueAtTime(vPlaying?MUSIC_DUCK:MUSIC_VOL,AC.currentTime+1.5);
+  m.gain.connect(AC.destination);
+  m.nextTime=AC.currentTime+.1;
+  m.timer=setInterval(()=>scheduleMusic(m),60);
+}
+function stopMusic(){
+  const m=M; M=null; if(!m) return;
+  if(m.timer) clearInterval(m.timer);
+  if(m.gain){ try{ m.gain.gain.cancelScheduledValues(AC.currentTime); m.gain.gain.setTargetAtTime(0,AC.currentTime,.2); const g=m.gain; setTimeout(()=>{ try{ g.disconnect(); }catch(e){} },1500); }catch(e){} }
+  if(m.file){ try{ m.file.pause(); m.file.src=''; }catch(e){} }
+}
+function duckMusic(on){
+  if(!M) return;
+  if(M.gain&&AC){ try{ M.gain.gain.setTargetAtTime(on?MUSIC_DUCK:MUSIC_VOL,AC.currentTime,.12); }catch(e){} }
+  if(M.file) M.file.volume=on?.14:.35;
+}
+function musicIntense(){
+  if(!G) return false;
+  return G.players.some(p=>p.hp>0&&p.hp<=5)||G.players.some(p=>p.board.some(u=>CARDS[u.id].lv===4));
+}
+function scheduleMusic(m){
+  if(M!==m||!AC) return;
+  const spb=60/m.theme.bpm/4;
+  while(m.nextTime<AC.currentTime+.25){ musicStep(m,m.step,m.nextTime,spb); m.nextTime+=spb; m.step=(m.step+1)%128; }
+}
+function mNote(m,type,midi,t,dur,vol){
+  const o=AC.createOscillator(), g=AC.createGain(); o.type=type; o.frequency.setValueAtTime(mtof(midi),t);
+  g.gain.setValueAtTime(.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+.012); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+  o.connect(g); g.connect(m.gain); o.start(t); o.stop(t+dur+.05);
+}
+function mNoise(m,t,dur,vol,freq){
+  const src=AC.createBufferSource(); src.buffer=NOISE; const f=AC.createBiquadFilter(); f.type='highpass'; f.frequency.value=freq;
+  const g=AC.createGain(); g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+  src.connect(f); f.connect(g); g.connect(m.gain); src.start(t); src.stop(t+dur+.02);
+}
+function mKick(m,t){
+  const o=AC.createOscillator(), g=AC.createGain(); o.type='sine'; o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(42,t+.12);
+  g.gain.setValueAtTime(.9,t); g.gain.exponentialRampToValueAtTime(.0001,t+.2); o.connect(g); g.connect(m.gain); o.start(t); o.stop(t+.22);
+}
+function musicStep(m,step,t,spb){
+  const th=m.theme, scale=th.minor?MINOR:MAJOR, prog=th.minor?PROG_MIN:PROG_MAJ;
+  const bar=Math.floor(step/16)%8, s=step%16, deg=prog[bar%4], hot=musicIntense();
+  const chord=[0,2,4].map(k=>{ const d=deg+k; return th.root+scale[d%7]+12*Math.floor(d/7); });
+  if(s%4===0||(hot&&s===10)) mKick(m,t);
+  if(s===4||s===12) mNoise(m,t,.13,.32,1400);
+  if(hot||s%2===0) mNoise(m,t,.04,hot?.07:.045,7000);
+  if(s%2===0) mNote(m,'triangle',chord[0]-24+((s===6||s===14)?12:0),t,spb*1.8,.42);
+  if(bar>=4||s%4===0||hot){ const pat=[0,1,2,1]; mNote(m,th.lead,chord[pat[s%4]]+(s>=8?12:0)+(hot?12:0),t,spb*.9,th.lead==='sawtooth'?.07:.1); }
+  if(s===0) chord.forEach(n=>mNote(m,'sine',n-12,t,spb*15,.05));
+}
+document.addEventListener('visibilitychange',()=>{
+  try{
+    if(document.hidden){ if(AC&&AC.state==='running') AC.suspend(); if(M&&M.file) M.file.pause(); }
+    else { if(AC&&M) AC.resume(); if(M&&M.file){ const pr=M.file.play(); if(pr&&pr.catch) pr.catch(()=>{}); } }
+  }catch(e){}
+});
+
 
 /* ===================== CARD GALLERY ===================== */
 let galFilter='all', galOpen=null;
@@ -1607,9 +1712,11 @@ const A = {
   stayIn:()=>{ G.askQuit=false; render(); },
   log:()=>{ G.showLog=!G.showLog; render(); },
   cancel:()=>{ clearSel(); render(); },
-  sound:()=>{ if(soundOn&&voiceOn) voiceOn=false; else if(soundOn){ soundOn=false; } else { soundOn=true; voiceOn=true; }
-    if(!voiceOn&&curVoice){ try{curVoice.pause();}catch(e){} vq=[]; }
-    try{ localStorage.setItem('voltnutt-sound',soundOn?'on':'off'); localStorage.setItem('voltnutt-voice',voiceOn?'on':'off'); }catch(e){}
+  sound:()=>{ const order=['all','nomusic','sfx','off'], cur=!soundOn?'off':!voiceOn?'sfx':!musicOn?'nomusic':'all', nx=order[(order.indexOf(cur)+1)%4];
+    soundOn=nx!=='off'; voiceOn=nx==='all'||nx==='nomusic'; musicOn=nx==='all';
+    if(!voiceOn&&curVoice){ try{curVoice.pause();}catch(e){} vq=[]; vPlaying=false; }
+    try{ localStorage.setItem('voltnutt-sound',soundOn?'on':'off'); localStorage.setItem('voltnutt-voice',voiceOn?'on':'off'); localStorage.setItem('voltnutt-music',musicOn?'on':'off'); }catch(e){}
+    if(!musicOn||!soundOn) stopMusic(); else if(G&&!G.over&&screen==='battle'&&!M) startMusic(G.musicKey);
     if(soundOn) sfx('play'); render(); },
   gallery:()=>{ screen='gallery'; galOpen=null; G=null; render(); },
   gfilter:d=>{ galFilter=d.k; galOpen=null; render(); },
