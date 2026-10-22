@@ -1,10 +1,13 @@
 package com.gnotesamsung7.voltnutttcg;
 
+import android.Manifest;
 import android.app.Activity;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -13,6 +16,8 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
 
     private WebView web;
+    private PermissionRequest pendingMic;
+    private static final int MIC_REQUEST = 7;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,7 +36,25 @@ public class MainActivity extends Activity {
         s.setAllowFileAccessFromFileURLs(true);
 
         web.setWebViewClient(new WebViewClient());
-        web.setWebChromeClient(new WebChromeClient());
+        // Lets the Voice studio use the microphone (asks the player once).
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(() -> {
+                    boolean wantsMic = false;
+                    for (String r : request.getResources()) {
+                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) wantsMic = true;
+                    }
+                    if (!wantsMic) { request.deny(); return; }
+                    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                    } else {
+                        pendingMic = request;
+                        requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_REQUEST);
+                    }
+                });
+            }
+        });
         setContentView(web);
         hideSystemBars();
 
@@ -76,6 +99,19 @@ public class MainActivity extends Activity {
                         MainActivity.super.onBackPressed();
                     }
                 });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == MIC_REQUEST && pendingMic != null) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                pendingMic.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+            } else {
+                pendingMic.deny();
+            }
+            pendingMic = null;
+        }
     }
 
     @Override

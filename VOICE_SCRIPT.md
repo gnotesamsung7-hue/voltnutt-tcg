@@ -18,7 +18,7 @@ You can save as **.mp3**, **.m4a** (most phone voice recorders), .ogg or .wav. K
 | `vo_victory` | Victory! | You win |
 | `vo_defeat` | Defeat. Rebuild and try again. | You lose |
 | `vo_factory_cleared` | Factory cleared! New cards unlocked! | You beat a campaign stop for the first time |
-| `sp_overdrive_strike` | Overdrive Strike! | A Fellowship or Directorate bot uses its special |
+| `sp_overdrive_strike` | Overdrive Strike! | A Friendship or Directorate bot uses its special |
 | `sp_flame_burst` | Flame Burst! | A Fire bot uses its special |
 | `sp_riptide` | Riptide! | A Water bot uses its special |
 | `sp_chain_lightning` | Chain Lightning! | A Storm bot uses its special |
